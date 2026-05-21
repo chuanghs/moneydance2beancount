@@ -1,0 +1,87 @@
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import List, Optional, Union
+from datetime import datetime
+
+class Status(Enum):
+    NONE = "none"
+    CLEARED = "cleared"
+    RECONCILED = "reconciled"
+
+@dataclass(frozen=True)
+class Currency:
+    code: str
+    rate: float
+    decimal: int
+
+@dataclass
+class BankInfo:
+    parent: 'Account'
+    bank_name: str = ""
+    account_number: str = ""
+
+@dataclass
+class CreditCardInfo:
+    parent: 'Account'
+    bank_name: str = ""
+
+@dataclass
+class InvestmentInfo:
+    parent: 'Account'
+
+@dataclass
+class AssetInfo:
+    parent: 'Account'
+
+@dataclass
+class LiabilityInfo:
+    parent: 'Account'
+
+@dataclass
+class LoanInfo:
+    parent: 'Account'
+    init_principal: int
+
+@dataclass
+class IncomeInfo:
+    parent: 'Account'
+
+@dataclass
+class ExpenseInfo:
+    parent: 'Account'
+
+AccountInfo = Union[
+    BankInfo,
+    CreditCardInfo,
+    InvestmentInfo,
+    AssetInfo,
+    LiabilityInfo,
+    LoanInfo,
+    IncomeInfo,
+    ExpenseInfo,
+    None  # For Root
+]
+
+@dataclass
+class Account:
+    name: str
+    currency: Currency
+    initial: int
+    comment: str = ""
+    info: AccountInfo = None
+
+@dataclass
+class Split:
+    receiver: Account
+    given_amount: int
+    received_amount: int
+    tags: str = ""
+    description: str = ""
+
+@dataclass
+class Transaction:
+    giver: Account
+    description: str
+    splits: List[Split]
+    date: datetime
+    status: Status
