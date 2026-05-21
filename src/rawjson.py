@@ -30,6 +30,7 @@ class RawInvestmentAccount:
     parentid: UUID
     currid: UUID
     sbal: str
+    invst_account_number: Optional[str] = None
     comment: Optional[str] = None
 
 @dataclass
@@ -76,6 +77,17 @@ class RawIncomeAccount:
     parentid: UUID
     currid: UUID
     sbal: str
+    comment: Optional[str] = None
+
+@dataclass
+class RawSecurityAccount:
+    id: UUID
+    name: str
+    parentid: UUID
+    currid: UUID
+    sbal: str
+    sec_type: Optional[str] = None
+    broker: Optional[str] = None
     comment: Optional[str] = None
 
 @dataclass

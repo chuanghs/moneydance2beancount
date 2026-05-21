@@ -766,7 +766,7 @@
     {
       "is_inactive": "n",
       "pid": "1235895",
-      "invst_account_number": "",
+      "invst_account_number": "INV-123",
       "creation_date": "1517889600000",
       "type": "v",
       "gen.asked_to_add_security": "y",
@@ -1137,6 +1137,21 @@
       "obj_type": "oltxns",
       "id": "b5d46ced-3201-4d11-8e49-a184f322a005.oltxns",
       "ts": "1517930099246"
+    },
+    {
+      "name": "My Security",
+      "old_id": "99",
+      "pid": "1235895",
+      "obj_type": "acct",
+      "currid": "0c928f84-eb72-4e52-87ee-a1eab3f43acc",
+      "id": "73276999-df93-42ea-9a66-225a84e1a5e9",
+      "type": "s",
+      "sec_type": "3",
+      "broker": "My Broker",
+      "curr": "1316061",
+      "parentid": "fc6f9c4d-85ea-404a-92cc-d93a33c416a9",
+      "sbal": "0",
+      "ts": "1517929488544"
     }
   ],
   "local_settings": {

@@ -28,6 +28,7 @@ class CreditCardInfo:
 @dataclass
 class InvestmentInfo:
     parent: 'Account'
+    account_number: str = ""
 
 @dataclass
 class AssetInfo:
@@ -50,6 +51,12 @@ class IncomeInfo:
 class ExpenseInfo:
     parent: 'Account'
 
+@dataclass
+class SecurityInfo:
+    parent: 'Account'
+    sec_type: str = ""
+    broker: str = ""
+
 AccountInfo = Union[
     BankInfo,
     CreditCardInfo,
@@ -59,6 +66,7 @@ AccountInfo = Union[
     LoanInfo,
     IncomeInfo,
     ExpenseInfo,
+    SecurityInfo,
     None  # For Root
 ]
 

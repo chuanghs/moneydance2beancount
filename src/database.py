@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple, Any, Optional
 from .models import (
     Currency, Account, Transaction, Split, Status,
     BankInfo, CreditCardInfo, InvestmentInfo, AssetInfo,
-    LiabilityInfo, LoanInfo, IncomeInfo, ExpenseInfo
+    LiabilityInfo, LoanInfo, IncomeInfo, ExpenseInfo, SecurityInfo
 )
 from .rawjson import (
     RawCurrency, RawTxn
@@ -168,9 +168,8 @@ class Database:
             date=date,
             status=stat,
             description=desc,
-            splits=txn_splits # Wait, I used full_splits above
+            splits=full_splits
         ))
-        self.transactions[-1].splits = full_splits
 
     def get_currency(self, id_val: UUID) -> Currency:
         curr = self.currencies.get(id_val)
@@ -215,7 +214,10 @@ class Database:
                 bank_name=acct_raw.get('bank_name', "")
             )
         elif acct_type == 'v':
-            info = InvestmentInfo(parent=parent)
+            info = InvestmentInfo(
+                parent=parent,
+                account_number=acct_raw.get('invst_account_number', "")
+            )
         elif acct_type == 'a':
             info = AssetInfo(parent=parent)
         elif acct_type == 'l':
@@ -227,6 +229,12 @@ class Database:
             info = IncomeInfo(parent=parent)
         elif acct_type == 'e':
             info = ExpenseInfo(parent=parent)
+        elif acct_type == 's':
+            info = SecurityInfo(
+                parent=parent,
+                sec_type=acct_raw.get('sec_type', ""),
+                broker=acct_raw.get('broker', "")
+            )
         else:
             raise MoneydanceError(f"Unknown account type: {acct_type}")
 

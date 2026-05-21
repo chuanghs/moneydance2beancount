@@ -3,7 +3,7 @@ import os
 from .database import Database
 from .models import (
     BankInfo, CreditCardInfo, InvestmentInfo, AssetInfo,
-    LoanInfo, LiabilityInfo, ExpenseInfo, IncomeInfo
+    LoanInfo, LiabilityInfo, ExpenseInfo, IncomeInfo, SecurityInfo
 )
 
 class TestDatabase(unittest.TestCase):
@@ -25,12 +25,17 @@ class TestDatabase(unittest.TestCase):
                 self.assertEqual(acct.name, "My Credit Card")
             elif isinstance(info, InvestmentInfo):
                 self.assertEqual(acct.name, "My Fund")
+                self.assertEqual(info.account_number, "INV-123")
             elif isinstance(info, AssetInfo):
                 self.assertEqual(acct.name, "My Asset")
             elif isinstance(info, LoanInfo):
                 self.assertEqual(acct.name, "House Loan")
             elif isinstance(info, LiabilityInfo):
                 self.assertEqual(acct.name, "Some Liability")
+            elif isinstance(info, SecurityInfo):
+                self.assertEqual(acct.name, "My Security")
+                self.assertEqual(info.sec_type, "3")
+                self.assertEqual(info.broker, "My Broker")
             elif info is None: # Root
                 self.assertEqual(acct.name, "Personal Finances")
             elif isinstance(info, ExpenseInfo):
