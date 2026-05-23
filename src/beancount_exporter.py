@@ -2,6 +2,7 @@ import re
 import hashlib
 import os
 import yaml
+from typing import Optional
 
 from src.models import (
     Account, Currency, BankInfo, CreditCardInfo, InvestmentInfo, AssetInfo,
@@ -141,13 +142,10 @@ def export_budgets(budgets: list[BudgetItem], account_paths: dict[int, str]) -> 
         
     return "\n".join(lines)
 
-def export_prices(snapshots: list[PriceSnapshot], operating_currencies: list[str]) -> str:
-    if not operating_currencies:
+def export_prices(snapshots: list[PriceSnapshot], base_currency_code: str) -> str:
+    if not base_currency_code:
         return ""
         
-    # Use the first operating currency as the default target for prices
-    base_currency = operating_currencies[0]
-    
     lines = []
     # Filter out snapshots missing currency info or with empty code
     valid_snapshots = [s for s in snapshots if s.currency and s.currency.code]
@@ -155,12 +153,15 @@ def export_prices(snapshots: list[PriceSnapshot], operating_currencies: list[str
     # Sort by date and currency
     for snap in sorted(valid_snapshots, key=lambda x: (x.date, x.currency.code)):
         code = get_commodity_code(snap.currency)
-        if code == base_currency:
+        if code == base_currency_code:
             continue
             
         date_str = snap.date.strftime("%Y-%m-%d")
-        # Use high precision for prices
-        lines.append(f'{date_str} price {code}  {snap.price:.6f} {base_currency}')
+        # Beancount price = 1 / MD urt
+        price = 1.0 / snap.price
+        
+        # Use high precision for prices (8 decimal places)
+        lines.append(f'{date_str} price {code}  {price:.8f} {base_currency_code}')
         
     return "\n".join(lines)
 
@@ -208,6 +209,40 @@ class AccountRegistry:
                 return new_path
             counter += 1
 
+def get_file_for_account(account: Account) -> str:
+    if re.search(r'Cash|現金', account.name):
+        return "daily.beancount"
+    if isinstance(account.info, (InvestmentInfo, SecurityInfo)):
+        return "investment.beancount"
+    elif isinstance(account.info, (LiabilityInfo, LoanInfo, CreditCardInfo)):
+        return "liability.beancount"
+    elif isinstance(account.info, (BankInfo, AssetInfo)):
+        return "assets.beancount"
+    # IncomeInfo, ExpenseInfo, and None (Root) go to main
+    return "main.beancount"
+
+def get_file_for_transaction(txn: Transaction) -> str:
+    all_accounts = [txn.giver] + [s.receiver for s in txn.splits]
+    
+    # 1. Daily (Cash/現金)
+    if any(re.search(r'Cash|現金', acc.name) for acc in all_accounts):
+        return "daily.beancount"
+    
+    # 2. Investment
+    if any(isinstance(acc.info, (InvestmentInfo, SecurityInfo)) for acc in all_accounts):
+        return "investment.beancount"
+        
+    # 3. Liability
+    if any(isinstance(acc.info, (LiabilityInfo, LoanInfo, CreditCardInfo)) for acc in all_accounts):
+        return "liability.beancount"
+        
+    # 4. Assets
+    if any(isinstance(acc.info, (BankInfo, AssetInfo)) for acc in all_accounts):
+        return "assets.beancount"
+        
+    # 5. Fallback
+    return "main.beancount"
+
 def get_beancount_path(account: Account) -> str:
     # If it's a security, collapse it into its parent (the Investment account)
     if isinstance(account.info, SecurityInfo):
@@ -253,7 +288,7 @@ def get_beancount_path(account: Account) -> str:
     path_parts.append(category)
     return ":".join(reversed(path_parts))
 
-def format_amount(amount: int, decimal_places: int) -> str:
+def format_amount(amount: int, decimal_places: int, strip_zeros: bool = False) -> str:
     s = str(abs(amount))
     if decimal_places <= 0:
         res = s
@@ -261,21 +296,28 @@ def format_amount(amount: int, decimal_places: int) -> str:
         res = "0." + s.zfill(decimal_places)
     else:
         res = s[:-decimal_places] + "." + s[-decimal_places:]
-    
+
+    if strip_zeros and "." in res:
+        res = res.rstrip('0').rstrip('.')
+
     if amount < 0:
         return "-" + res
     return res
-
-def export_accounts(accounts: list[Account], account_paths: dict[int, str], start_date: str = "1970-01-01") -> str:
+def export_accounts(accounts: list[Account], account_paths: dict[int, str], start_date: str = "1970-01-01", target_file: Optional[str] = None) -> str:
     lines = []
     
-    # Opening balance account definition
-    lines.append(f'{start_date} open Equity:OpeningBalances')
-    lines.append("")
+    # Opening balance account definition - ONLY in main.beancount
+    if target_file is None or target_file == "main.beancount":
+        lines.append(f'{start_date} open Equity:OpeningBalances')
+        lines.append("")
     
     # Group accounts by their unique path
     path_to_accounts = {} # unique_path -> list of MD accounts
     for acct in accounts:
+        # If filtering, check if this account belongs to the target file
+        if target_file and get_file_for_account(acct) != target_file:
+            continue
+            
         upath = account_paths[id(acct)]
         if upath not in path_to_accounts:
             path_to_accounts[upath] = []
@@ -292,7 +334,11 @@ def export_accounts(accounts: list[Account], account_paths: dict[int, str], star
         # Pick the "best" MD account for metadata (usually the one that isn't a security)
         primary_acct = next((a for a in accts_in_path if not isinstance(a.info, SecurityInfo)), accts_in_path[0])
         
-        lines.append(f'{start_date} open {path}{curr_str}')
+        # If any account in this path is a security, add FIFO booking policy
+        has_security = any(isinstance(a.info, SecurityInfo) for a in accts_in_path)
+        booking_policy = ' "FIFO"' if has_security else ""
+        
+        lines.append(f'{start_date} open {path}{curr_str}{booking_policy}')
         lines.append(f'  md_name: "{escape_beancount_string(primary_acct.name)}"')
         if primary_acct.comment:
             lines.append(f'  comment: "{escape_beancount_string(primary_acct.comment)}"')
@@ -302,17 +348,28 @@ def export_accounts(accounts: list[Account], account_paths: dict[int, str], star
             if acct.initial != 0:
                 lines.append("")
                 lines.append(f'{start_date} * "{escape_beancount_string("Opening Balance")}"')
-                amount_str = format_amount(acct.initial, acct.currency.decimal)
+                amount_str = format_amount(acct.initial, acct.currency.decimal, strip_zeros=True)
+                
+                # If it's a security, add {{ 0 BASE_CURR }}
+                cost_str = ""
+                if isinstance(acct.info, SecurityInfo):
+                    base_curr = get_commodity_code(acct.info.parent.currency)
+                    cost_str = f" {{{{ 0 {base_curr} }}}}"
+                
                 lines.append(f'  Equity:OpeningBalances')
-                lines.append(f'  {path}  {amount_str} {get_commodity_code(acct.currency)}')
+                lines.append(f'  {path}  {amount_str} {get_commodity_code(acct.currency)}{cost_str}')
                 lines.append("")
 
     return "\n".join(lines)
 
-def export_transactions(transactions: list[Transaction], account_paths: dict[int, str]) -> str:
+def export_transactions(transactions: list[Transaction], account_paths: dict[int, str], target_file: Optional[str] = None) -> str:
     lines = []
     
     for txn in sorted(transactions, key=lambda x: x.date):
+        # If filtering, check if this transaction belongs to the target file
+        if target_file and get_file_for_transaction(txn) != target_file:
+            continue
+            
         # Status mapping
         flag = "*" if txn.status in (Status.CLEARED, Status.RECONCILED) else "!"
         
@@ -332,25 +389,111 @@ def export_transactions(transactions: list[Transaction], account_paths: dict[int
         lines.append(f'  {giver_path}  {giver_amount_str} {giver_currency}')
         
         # Split postings
+        has_security_sell = False
         for split in txn.splits:
             recv_path = account_paths[id(split.receiver)]
             recv_currency = get_commodity_code(split.receiver.currency)
             
             # Use given_amount (samt) for the receiving account's posting
             if split.receiver.currency.code == txn.giver.currency.code:
-                amount_str = format_amount(split.given_amount, split.receiver.currency.decimal)
+                amount_str = format_amount(split.given_amount, split.receiver.currency.decimal, strip_zeros=True)
                 lines.append(f'  {recv_path}   {amount_str} {recv_currency}')
             else:
-                # Multi-currency logic: use @@ (Total Price)
-                # amt_recv = samt (amount in receiver currency)
-                # amt_parent = pamt (amount in giver currency)
-                amt_recv_str = format_amount(split.given_amount, split.receiver.currency.decimal)
-                amt_parent_str = format_amount(abs(split.received_amount), txn.giver.currency.decimal)
-                lines.append(f'  {recv_path}   {amt_recv_str} {recv_currency} @@ {amt_parent_str} {giver_currency}')
-                
+                # Multi-currency logic
+                # For Security transactions (receiver is SecurityInfo and quantity non-zero), use cost basis notation
+                if isinstance(split.receiver.info, SecurityInfo) and split.given_amount != 0:
+                    amt_recv_str = format_amount(split.given_amount, split.receiver.currency.decimal, strip_zeros=True)
+                    
+                    if split.given_amount > 0:
+                        # Buy: Establish cost basis (Unit Cost notation { })
+                        # Calculate unit price: abs(total_cost) / abs(quantity)
+                        # Convert from MD integer amounts to floats first
+                        total_cost_val = abs(split.received_amount) / (10 ** txn.giver.currency.decimal)
+                        quantity_val = abs(split.given_amount) / (10 ** split.receiver.currency.decimal)
+                        unit_price = total_cost_val / quantity_val
+                        
+                        lines.append(f'  {recv_path}   {amt_recv_str} {recv_currency} {{ {unit_price:.6f} {giver_currency} }}')
+                    else:
+                        # Sell: Use lot matcher {} and specify total price @@
+                        has_security_sell = True
+                        amt_parent_str = format_amount(abs(split.received_amount), txn.giver.currency.decimal)
+                        lines.append(f'  {recv_path}   {amt_recv_str} {recv_currency} {{}} @@ {amt_parent_str} {giver_currency}')
+                else:
+                    # Currency exchange logic: use @@ (Total Price)
+                    amt_recv_str = format_amount(split.given_amount, split.receiver.currency.decimal, strip_zeros=True)
+                    amt_parent_str = format_amount(abs(split.received_amount), txn.giver.currency.decimal)
+                    lines.append(f'  {recv_path}   {amt_recv_str} {recv_currency} @@ {amt_parent_str} {giver_currency}')
+        
+        # If we had a security sell, add an empty Equity:OpeningBalances posting with explicit currency
+        # to absorb gain/loss and avoid ambiguity in multi-currency transactions.
+        if has_security_sell:
+            lines.append(f'  Equity:OpeningBalances {giver_currency}')
+            
         lines.append("")
 
     return "\n".join(lines)
+
+def full_multi_export(db: 'Database', operating_currencies: list[str], output_dir: str):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        
+    registry = AccountRegistry()
+    account_paths = {} # id(acct) -> unique_path
+    raw_to_unique = {} # raw_path -> unique_path
+    
+    for acct in db.accounts.values():
+        raw_path = get_beancount_path(acct)
+        if raw_path not in raw_to_unique:
+            raw_to_unique[raw_path] = registry.get_unique_path(raw_path)
+        account_paths[id(acct)] = raw_to_unique[raw_path]
+
+    # File definitions
+    categories = [
+        "commodity.beancount",
+        "prices.beancount",
+        "assets.beancount",
+        "investment.beancount",
+        "liability.beancount",
+        "daily.beancount"
+    ]
+    
+    # 1. Export Category Files
+    
+    # commodity.beancount
+    with open(os.path.join(output_dir, "commodity.beancount"), "w", encoding="utf-8") as f:
+        f.write(";; === COMMODITIES ===\n\n")
+        f.write(export_commodities(list(db.currencies.values())))
+        
+    # prices.beancount
+    with open(os.path.join(output_dir, "prices.beancount"), "w", encoding="utf-8") as f:
+        f.write(";; === PRICES ===\n\n")
+        if db.price_snapshots:
+            f.write(export_prices(db.price_snapshots, db.base_currency_code))
+            
+    # Category files (Accounts + Transactions)
+    for cat_file in ["assets.beancount", "investment.beancount", "liability.beancount", "daily.beancount"]:
+        with open(os.path.join(output_dir, cat_file), "w", encoding="utf-8") as f:
+            f.write(f";; === {cat_file.upper().replace('.BEANCOUNT', '')} ===\n\n")
+            f.write(export_accounts(list(db.accounts.values()), account_paths, target_file=cat_file))
+            f.write("\n\n")
+            f.write(export_transactions(db.transactions, account_paths, target_file=cat_file))
+            
+    # main.beancount
+    with open(os.path.join(output_dir, "main.beancount"), "w", encoding="utf-8") as f:
+        root_account = next((a for a in db.accounts.values() if a.info is None), None)
+        f.write(";; === OPTIONS ===\n")
+        f.write(export_options(root_account, operating_currencies))
+        f.write("\n\n")
+        
+        for cat in categories:
+            f.write(f'include "{cat}"\n')
+        f.write("\n")
+        
+        f.write(";; === MAIN ACCOUNTS (Income/Expenses) ===\n\n")
+        f.write(export_accounts(list(db.accounts.values()), account_paths, target_file="main.beancount"))
+        f.write("\n\n")
+        f.write(";; === MAIN TRANSACTIONS ===\n\n")
+        f.write(export_transactions(db.transactions, account_paths, target_file="main.beancount"))
 
 def full_export(db: 'Database', operating_currencies: list[str] = None) -> str:
     if operating_currencies is None:
@@ -394,7 +537,7 @@ def full_export(db: 'Database', operating_currencies: list[str] = None) -> str:
     # 2. Prices
     if db.price_snapshots:
         sections.append(";; === PRICES ===")
-        sections.append(export_prices(db.price_snapshots, actual_currencies))
+        sections.append(export_prices(db.price_snapshots, db.base_currency_code))
         sections.append("")
         
     # 3. Budgets
@@ -414,7 +557,7 @@ if __name__ == "__main__":
     from src.database import Database
     
     if len(sys.argv) < 2:
-        print("Usage: python3 -m src.beancount_exporter <moneydance_json> [base_currencies_comma_separated]")
+        print("Usage: python3 -m src.beancount_exporter <moneydance_json> [base_currencies_comma_separated] [output_dir]")
         sys.exit(1)
         
     json_path = sys.argv[1]
@@ -422,8 +565,15 @@ if __name__ == "__main__":
     base_curr_arg = sys.argv[2] if len(sys.argv) > 2 else ""
     operating_currencies = [c.strip() for c in base_curr_arg.split(",")] if base_curr_arg else []
     
+    output_dir = sys.argv[3] if len(sys.argv) > 3 else None
+    
     with open(json_path, "r") as f:
         data = f.read()
         
     db = Database.load(data)
-    print(full_export(db, operating_currencies))
+    
+    if output_dir:
+        full_multi_export(db, operating_currencies, output_dir)
+        print(f";; Multi-file export complete. Files generated in: {output_dir}")
+    else:
+        print(full_export(db, operating_currencies))
