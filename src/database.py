@@ -5,7 +5,8 @@ from typing import Dict, List, Tuple, Any, Optional
 from .models import (
     Currency, Account, Transaction, Split, Status,
     BankInfo, CreditCardInfo, InvestmentInfo, AssetInfo,
-    LiabilityInfo, LoanInfo, IncomeInfo, ExpenseInfo, SecurityInfo
+    LiabilityInfo, LoanInfo, IncomeInfo, ExpenseInfo, SecurityInfo,
+    PriceSnapshot, BudgetItem
 )
 from .rawjson import (
     RawCurrency, RawTxn
@@ -19,20 +20,25 @@ class Database:
         self.accounts: Dict[UUID, Account] = {}
         self.currencies: Dict[UUID, Currency] = {}
         self.transactions: List[Transaction] = []
+        self.price_snapshots: List[PriceSnapshot] = []
+        self.budget_items: List[BudgetItem] = []
 
     @classmethod
     def load(cls, data_str: str) -> 'Database':
         raw_data = json.loads(data_str)
         db = cls()
         
-        accounts_raw, currencies_raw, transactions_raw = db._sort_exported_data(raw_data['all_items'])
+        accounts_raw, currencies_raw, transactions_raw, csnaps_raw, budgets_raw = db._sort_exported_data(raw_data['all_items'])
 
         for curr_raw in currencies_raw:
             id_val = UUID(curr_raw['id'])
             db.currencies[id_val] = Currency(
                 code=curr_raw['currid'],
                 decimal=int(curr_raw['dec']),
-                rate=float(curr_raw['rate'])
+                rate=float(curr_raw['rate']),
+                ticker=curr_raw.get('ticker', ""),
+                name=curr_raw.get('name', ""),
+                md_id=curr_raw['id']
             )
 
         # Accounts might be hierarchical, use the same logic as Rust
@@ -43,13 +49,21 @@ class Database:
 
         for txn_raw in transactions_raw:
             db._import_splits(txn_raw)
+            
+        for snap_raw in csnaps_raw:
+            db._import_snapshot(snap_raw)
+            
+        for budget_raw in budgets_raw:
+            db._import_budget(budget_raw)
 
         return db
 
-    def _sort_exported_data(self, all_items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    def _sort_exported_data(self, all_items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
         accounts = []
         currencies = []
         transactions = []
+        csnaps = []
+        budgets = []
 
         for item in all_items:
             obj_type = item.get('obj_type')
@@ -59,8 +73,12 @@ class Database:
                 currencies.append(item)
             elif obj_type == 'txn':
                 transactions.append(item)
+            elif obj_type == 'csnap':
+                csnaps.append(item)
+            elif obj_type == 'bdgtitem':
+                budgets.append(item)
         
-        return accounts, currencies, transactions
+        return accounts, currencies, transactions, csnaps, budgets
 
     def _add_accounts(self, parent_set: Dict[UUID, Dict[str, Any]], id_val: UUID) -> Account:
         if id_val in self.accounts:
@@ -169,6 +187,73 @@ class Database:
             status=stat,
             description=desc,
             splits=full_splits
+        ))
+
+    def _import_snapshot(self, snap_raw: Dict[str, Any]) -> None:
+        currid = UUID(snap_raw['curr'])
+        if currid not in self.currencies:
+            return # Skip if currency not known
+        
+        curr = self.currencies[currid]
+        dt_str = snap_raw.get('dt')
+        if not dt_str:
+            return
+        date = datetime.strptime(dt_str, "%Y%m%d")
+        
+        # User Rate (urt) is price relative to base currency
+        # In MD urt is how many base units per 1 unit of this currency.
+        # Wait, usually urt is 1/rate.
+        # Let's check sample data again.
+        # TWD (base) has rate 1.0.
+        # USD has rate 0.033... (TWD per 1 USD?) No, that would be 30.
+        # Usually rate is how many units per 1 base unit.
+        # NT$ 1.0 = USD 0.033. So 1 Base = 0.033 USD.
+        # urt = User Rate. 
+        # In MD sample:
+        # USD id: 87970f73-aeef-4693-9a9f-e56e1c45884f
+        # csnap for USD has urt: 0.03220249138616486
+        # This means 1 Base (TWD) = 0.0322 USD.
+        # So price of TWD in USD is 0.0322.
+        # Price of USD in TWD is 1 / 0.0322 = 31.05.
+        
+        # Fava price directive: DATE price CURRENCY AMOUNT TARGET_CURRENCY
+        # 2026-02-13 price USD 31.42 TWD
+        
+        # If we want price of USD in TWD:
+        # urt_base = 1.0
+        # urt_usd = 0.0322
+        # Price = urt_base / urt_usd = 31.05
+        
+        # For simplicity, let's just store the urt as the 'price' and handle it in exporter.
+        urt = float(snap_raw.get('urt', 0))
+        if urt == 0:
+            return
+            
+        self.price_snapshots.append(PriceSnapshot(
+            currency=curr,
+            date=date,
+            price=urt
+        ))
+
+    def _import_budget(self, budget_raw: Dict[str, Any]) -> None:
+        catid = UUID(budget_raw['catid'])
+        if catid not in self.accounts:
+            return
+            
+        acct = self.accounts[catid]
+        dt_str = budget_raw.get('intstart')
+        if not dt_str:
+            return
+        date = datetime.strptime(dt_str, "%Y%m%d")
+        
+        amt = int(budget_raw.get('amt', 0))
+        interval = int(budget_raw.get('interval', 0))
+        
+        self.budget_items.append(BudgetItem(
+            account=acct,
+            date=date,
+            amount=amt,
+            interval=interval
         ))
 
     def get_currency(self, id_val: UUID) -> Currency:

@@ -13,6 +13,9 @@ class Currency:
     code: str
     rate: float
     decimal: int
+    ticker: str = ""
+    name: str = ""
+    md_id: str = ""
 
 @dataclass
 class BankInfo:
@@ -93,3 +96,16 @@ class Transaction:
     splits: List[Split]
     date: datetime
     status: Status
+
+@dataclass
+class PriceSnapshot:
+    currency: Currency
+    date: datetime
+    price: float # Relative to base currency
+
+@dataclass
+class BudgetItem:
+    account: Account
+    date: datetime
+    amount: int
+    interval: int # MD interval code (e.g., 6 for monthly)
