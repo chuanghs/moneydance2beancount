@@ -22,6 +22,7 @@ class Database:
         self.transactions: List[Transaction] = []
         self.price_snapshots: List[PriceSnapshot] = []
         self.budget_items: List[BudgetItem] = []
+        self.base_currency_code: str = "USD" # Default
 
     @classmethod
     def load(cls, data_str: str) -> 'Database':
@@ -32,14 +33,17 @@ class Database:
 
         for curr_raw in currencies_raw:
             id_val = UUID(curr_raw['id'])
+            code = curr_raw['currid']
             db.currencies[id_val] = Currency(
-                code=curr_raw['currid'],
+                code=code,
                 decimal=int(curr_raw['dec']),
                 rate=float(curr_raw['rate']),
                 ticker=curr_raw.get('ticker', ""),
                 name=curr_raw.get('name', ""),
                 md_id=curr_raw['id']
             )
+            if curr_raw.get('isbase') == 'y':
+                db.base_currency_code = code
 
         # Accounts might be hierarchical, use the same logic as Rust
         remaining_accounts = {UUID(a['id']): a for a in accounts_raw}
