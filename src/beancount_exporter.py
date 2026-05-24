@@ -153,7 +153,11 @@ def export_prices(snapshots: list[PriceSnapshot], base_currency_code: str) -> st
     # Sort by date and derived commodity code
     for snap in sorted(valid_snapshots, key=lambda x: (x.date, get_commodity_code(x.currency))):
         code = get_commodity_code(snap.currency)
-        if code == base_currency_code:
+        
+        # Determine the target currency for this price
+        target_currency = snap.currency.parent_code if snap.currency.parent_code else base_currency_code
+        
+        if code == target_currency:
             continue
             
         date_str = snap.date.strftime("%Y-%m-%d")
@@ -161,7 +165,7 @@ def export_prices(snapshots: list[PriceSnapshot], base_currency_code: str) -> st
         price = 1.0 / snap.price
         
         # Use high precision for prices (8 decimal places)
-        lines.append(f'{date_str} price {code}  {price:.8f} {base_currency_code}')
+        lines.append(f'{date_str} price {code}  {price:.8f} {target_currency}')
         
     return "\n".join(lines)
 

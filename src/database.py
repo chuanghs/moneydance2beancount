@@ -31,19 +31,50 @@ class Database:
         
         accounts_raw, currencies_raw, transactions_raw, csnaps_raw, budgets_raw = db._sort_exported_data(raw_data['all_items'])
 
+        # First pass: map MD ID to derived Beancount code
+        md_id_to_code = {}
+        for curr_raw in currencies_raw:
+            code = curr_raw.get('currid', "")
+            if not code:
+                code = curr_raw.get('ticker', "")
+            if not code:
+                code = curr_raw.get('name', "")
+            
+            from src.beancount_exporter import normalize_commodity
+            normalized = normalize_commodity(code) if code else "UNKNOWN"
+            md_id_to_code[curr_raw['id']] = normalized
+
         for curr_raw in currencies_raw:
             id_val = UUID(curr_raw['id'])
             code = curr_raw['currid']
+            
+            # Resolve parent_code
+            parent_id_raw = curr_raw.get('relative_to_currid') or curr_raw.get('rel_curr_id')
+            parent_code = None
+            if parent_id_raw:
+                # Moneydance sometimes uses MD ID (UUID-like) and sometimes uses the raw code string (e.g. 'USD')
+                if parent_id_raw in md_id_to_code:
+                    parent_code = md_id_to_code[parent_id_raw]
+                else:
+                    # If it's not an ID, it might be a direct code. Normalize it.
+                    from src.beancount_exporter import normalize_commodity
+                    parent_code = normalize_commodity(parent_id_raw)
+            
+            # If parent is the same as this currency, it's not a real hierarchy (self-referential base)
+            if parent_code == md_id_to_code[curr_raw['id']]:
+                parent_code = None
+
             db.currencies[id_val] = Currency(
                 code=code,
                 decimal=int(curr_raw['dec']),
                 rate=float(curr_raw['rate']),
                 ticker=curr_raw.get('ticker', ""),
                 name=curr_raw.get('name', ""),
-                md_id=curr_raw['id']
+                md_id=curr_raw['id'],
+                parent_code=parent_code
             )
             if curr_raw.get('isbase') == 'y':
-                db.base_currency_code = code
+                db.base_currency_code = md_id_to_code[curr_raw['id']]
 
         # Accounts might be hierarchical, use the same logic as Rust
         remaining_accounts = {UUID(a['id']): a for a in accounts_raw}

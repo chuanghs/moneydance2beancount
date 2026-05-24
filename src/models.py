@@ -16,6 +16,7 @@ class Currency:
     ticker: str = ""
     name: str = ""
     md_id: str = ""
+    parent_code: Optional[str] = None
 
 @dataclass
 class BankInfo:

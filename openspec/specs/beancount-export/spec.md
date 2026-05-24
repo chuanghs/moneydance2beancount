@@ -26,18 +26,22 @@ The system SHALL use appropriate Beancount syntax for transactions involving mul
 - **WHEN** an account starts with 10 shares of "VT" and the investment base currency is USD
 - **THEN** the opening balance posting SHALL be `Assets:Investment:Schwab 10 VT {{ 0 USD }}`
 
-### Requirement: Price History Export
-The system SHALL export historical exchange rates as Beancount `price` directives. **It SHALL use the Moneydance base currency as the target currency for all prices.** It SHALL invert the Moneydance `urt` value (`1 / urt`) to ensure the price represents the cost of 1 unit of the commodity in the base currency. It SHALL use high precision (at least 8 decimal places) for price values.
+### Requirement: Hierarchical Price History Export
+The system SHALL export historical exchange rates as Beancount `price` directives. It SHALL respect the currency hierarchy defined in Moneydance by targeting the specific parent currency for each commodity.
+
+- If a commodity is relative to a specific currency (e.g., CDNS relative to USD), the `price` directive SHALL target that specific currency.
+- If no specific parent is defined, or it is the base currency, the `price` directive SHALL target the Moneydance base currency.
+
+It SHALL invert the Moneydance `urt` value (`1 / urt`) to ensure the price represents the cost of 1 unit of the commodity in the target currency. It SHALL use high precision (at least 8 decimal places) for price values.
 
 **The system SHALL include price snapshots for commodities even if their raw currency code (currid) is empty, provided a valid Beancount commodity symbol can be derived from their name or ticker.**
 
-#### Scenario: Correct price direction
-- **WHEN** Moneydance has a base currency of TWD and a USD snapshot with `urt` 0.033333
-- **THEN** the exporter SHALL produce `DATE price USD 30.00000000 TWD`
-
-#### Scenario: Security price export
-- **WHEN** a stock has `urt` 0.0004 (Units per TWD)
-- **THEN** the exporter SHALL produce `DATE price STOCK 2500.00000000 TWD`
+#### Scenario: Hierarchical price export
+- **GIVEN** a base currency of TWD
+- **GIVEN** a stock "CDNS" defined as relative to "USD"
+- **GIVEN** a price snapshot for "CDNS" of 0.00285 USD (meaning 1 USD = 0.00285 CDNS)
+- **WHEN** prices are exported
+- **THEN** the system SHALL produce a `price` directive: `DATE price CDNS 350.87719298 USD`
 
 #### Scenario: Price export with empty currency code
 - **GIVEN** a commodity named "YUANTA_TW50" with an empty `currid` and a price snapshot of 0.010 TWD

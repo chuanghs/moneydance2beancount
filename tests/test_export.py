@@ -1,5 +1,7 @@
 import unittest
+import json
 from datetime import datetime
+from src.database import Database
 from src.models import Account, Currency, BankInfo, ExpenseInfo, Transaction, Split, Status, PriceSnapshot, BudgetItem, AssetInfo, CreditCardInfo, InvestmentInfo, SecurityInfo
 from src.beancount_exporter import (
     export_accounts, export_transactions, export_prices, export_budgets, 
@@ -145,10 +147,20 @@ class TestExport(unittest.TestCase):
             price=0.010 # 1 TWD = 0.010 YUANTA_TW50 -> 1 YUANTA_TW50 = 100 TWD
         )
         
+        # Snapshot for commodity with parent_code (Cycle 3)
+        # CDNS is relative to USD, not TWD
+        cdns_stock = Currency(code="CDNS", rate=1.0, decimal=4, parent_code="USD")
+        cdns_snapshot = PriceSnapshot(
+            currency=cdns_stock,
+            date=datetime(2026, 5, 23),
+            price=0.00285 # 1 USD = 0.00285 CDNS -> 1 CDNS = 350.877 USD
+        )
+        
         # Should now accept base_currency_code instead of operating_currencies list
-        output = export_prices([usd_snapshot, tw_snapshot], base_currency_code="TWD")
+        output = export_prices([usd_snapshot, tw_snapshot, cdns_snapshot], base_currency_code="TWD")
         self.assertIn('2026-05-21 price USD  30.00000300 TWD', output)
         self.assertIn('2026-05-22 price YUANTA_TW50  100.00000000 TWD', output)
+        self.assertIn('2026-05-23 price CDNS  350.87719298 USD', output)
 
     def test_export_budgets(self):
         dining = Account(name="Dining", currency=self.usd, initial=0, info=ExpenseInfo(parent=self.root))
@@ -163,6 +175,31 @@ class TestExport(unittest.TestCase):
         output = export_budgets([budget], account_paths)
         
         self.assertIn('2026-01-01 custom "budget" Expenses:Dining "monthly" 500.00 USD', output)
+
+    def test_currency_parent_code(self):
+        # This test verifies the model change (Cycle 1)
+        c = Currency(code="CDNS", rate=1.0, decimal=2, parent_code="USD")
+        self.assertEqual(c.parent_code, "USD")
+
+    def test_currency_hierarchy_resolution(self):
+        # Verify that Database.load resolves currency hierarchy (Cycle 2)
+        twd_id = "00000000-0000-0000-0000-000000000001"
+        usd_id = "00000000-0000-0000-0000-000000000002"
+        stock_id = "00000000-0000-0000-0000-000000000003"
+        db_data = {
+            "all_items": [
+                {"obj_type": "curr", "id": twd_id, "currid": "TWD", "dec": "0", "rate": "1.0", "isbase": "y"},
+                {"obj_type": "curr", "id": usd_id, "currid": "USD", "dec": "2", "rate": "0.033", "relative_to_currid": twd_id},
+                {"obj_type": "curr", "id": stock_id, "currid": "CDNS", "dec": "4", "rate": "0.0028", "relative_to_currid": usd_id}
+            ]
+        }
+        db = Database.load(json.dumps(db_data))
+        
+        stock = next(c for c in db.currencies.values() if c.code == "CDNS")
+        usd = next(c for c in db.currencies.values() if c.code == "USD")
+        
+        self.assertEqual(stock.parent_code, "USD")
+        self.assertEqual(usd.parent_code, "TWD")
 
     def test_database_base_currency_detection(self):
         # Verify that Database.load identifies the currency with isbase: "y"
