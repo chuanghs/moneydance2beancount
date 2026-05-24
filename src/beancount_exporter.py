@@ -147,11 +147,11 @@ def export_prices(snapshots: list[PriceSnapshot], base_currency_code: str) -> st
         return ""
         
     lines = []
-    # Filter out snapshots missing currency info or with empty code
-    valid_snapshots = [s for s in snapshots if s.currency and s.currency.code]
+    # Filter out snapshots missing currency info or where we can't derive a valid symbol
+    valid_snapshots = [s for s in snapshots if s.currency and get_commodity_code(s.currency) != "UNKNOWN"]
     
-    # Sort by date and currency
-    for snap in sorted(valid_snapshots, key=lambda x: (x.date, x.currency.code)):
+    # Sort by date and derived commodity code
+    for snap in sorted(valid_snapshots, key=lambda x: (x.date, get_commodity_code(x.currency))):
         code = get_commodity_code(snap.currency)
         if code == base_currency_code:
             continue

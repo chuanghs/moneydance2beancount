@@ -128,27 +128,27 @@ class TestExport(unittest.TestCase):
         self.assertIn('Assets:Bank:TWDSavings   3000 TWD @@ 100.00 USD', output)
 
     def test_export_prices(self):
-        twd = Currency(code="TWD", rate=30.0, decimal=2)
-        # urt is 0.04 (meaning 1 TWD = 0.04 USD)
-        # Beancount price should be 1 / 0.04 = 25.0 USD
-        valid_snapshot = PriceSnapshot(
-            currency=twd,
+        usd = Currency(code="USD", rate=1.0, decimal=2)
+        # urt is 0.03333333 (meaning 1 TWD = 0.03333333 USD)
+        # Beancount price should be 1 / 0.03333333 = 30.0 TWD
+        usd_snapshot = PriceSnapshot(
+            currency=usd,
             date=datetime(2026, 5, 21),
-            price=0.04
+            price=0.03333333
         )
         
-        # Snapshot with missing capital (no currency code)
-        invalid_currency = Currency(code="", rate=1.0, decimal=2)
-        invalid_snapshot = PriceSnapshot(
-            currency=invalid_currency,
-            date=datetime(2026, 5, 21),
-            price=1.0
+        # Snapshot for commodity with empty code but valid ticker (common in Taiwan stocks)
+        tw_stock = Currency(code="", rate=1.0, decimal=4, ticker="0050.TW", name="元大台灣50")
+        tw_snapshot = PriceSnapshot(
+            currency=tw_stock,
+            date=datetime(2026, 5, 22),
+            price=0.010 # 1 TWD = 0.010 YUANTA_TW50 -> 1 YUANTA_TW50 = 100 TWD
         )
         
         # Should now accept base_currency_code instead of operating_currencies list
-        output = export_prices([valid_snapshot, invalid_snapshot], base_currency_code="USD")
-        self.assertIn('2026-05-21 price TWD  25.00000000 USD', output)
-        self.assertNotIn('price   1.00000000 USD', output) # Should skip the empty code one
+        output = export_prices([usd_snapshot, tw_snapshot], base_currency_code="TWD")
+        self.assertIn('2026-05-21 price USD  30.00000300 TWD', output)
+        self.assertIn('2026-05-22 price YUANTA_TW50  100.00000000 TWD', output)
 
     def test_export_budgets(self):
         dining = Account(name="Dining", currency=self.usd, initial=0, info=ExpenseInfo(parent=self.root))
